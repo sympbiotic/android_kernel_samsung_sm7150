@@ -120,10 +120,10 @@ jobs:
             "${{ matrix.device.device2 }}" \
             "${{ matrix.device.soc }}"
 
-            - name: Verify kernel outputs
+            
+      - name: Verify kernel outputs
         run: |
           echo "Checking kernel Image..."
-
           test -s AnyKernel3/Image
 
           echo "Checking DTB..."
