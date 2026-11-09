@@ -1,0 +1,5 @@
+config K9
+    tristate "K9 driver"
+    default m
+    help
+      K9 loadable kernel module.
