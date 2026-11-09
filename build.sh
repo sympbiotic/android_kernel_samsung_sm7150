@@ -1,4 +1,5 @@
 #!/bin/sh
+set -e
 
 KERNEL_DIR=$(pwd)
 DEVICE="$1"
@@ -11,20 +12,14 @@ build_kernel() {
     echo "-----------------------------------------------"
 
     export ARCH=arm64
-    mkdir out
-
+    mkdir -p out
     export PATH=$(pwd)/llvm-22/bin:$PATH
 
     KERNEL_MAKE_ENV="DTC_EXT=$(pwd)/tools/dtc CONFIG_BUILD_ARM64_DT_OVERLAY=y"
     BUILD_VAR="-j$(nproc) -C $(pwd) O=$(pwd)/out $KERNEL_MAKE_ENV ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1"
 
     cat arch/arm64/configs/sdmmagpie_defconfig arch/arm64/configs/$DEVICE.config > arch/arm64/configs/temp_defconfig
-
-    echo "
-CONFIG_THINLTO=y
-# CONFIG_LTO_NONE is not set
-CONFIG_LTO_CLANG=y
-    " >> arch/arm64/configs/temp_defconfig
+    printf "\nCONFIG_THINLTO=y\n# CONFIG_LTO_NONE is not set\nCONFIG_LTO_CLANG=y\n" >> arch/arm64/configs/temp_defconfig
 
     make $BUILD_VAR temp_defconfig
     rm arch/arm64/configs/temp_defconfig
@@ -42,14 +37,16 @@ build_dtbo() {
     echo "-----------------------------------------------"
     echo "Building dtbo.img..."
     echo "-----------------------------------------------"
-    DTBO_FILES=$(find $(pwd)/out/arch/arm64/boot/dts/samsung/ -name sm*150-sec-$DEVICE-eur-overlay-*.dtbo)
+    DTBO_FILES=$(find $(pwd)/out/arch/arm64/boot/dts/samsung/ -name "sm*150-sec-$DEVICE-eur-overlay-*.dtbo")
     $(pwd)/tools/mkdtimg create $(pwd)/out/dtbo.img --page_size=4096 ${DTBO_FILES}
 }
-ls -la out/arch/arm64/boot/
-prepare_ak3() {
-    cd AnyKernel3/
 
-    # Find whichever kernel image the build produced
+prepare_ak3() {
+    echo "-----------------------------------------------"
+    echo "Checking kernel output..."
+    echo "-----------------------------------------------"
+    ls -la "$KERNEL_DIR/out/arch/arm64/boot/"
+
     KIMG=""
     for f in Image.gz-dtb Image.gz Image; do
         if [ -f "$KERNEL_DIR/out/arch/arm64/boot/$f" ]; then
@@ -59,12 +56,13 @@ prepare_ak3() {
     done
 
     if [ -z "$KIMG" ]; then
-        echo "ERROR: no kernel image found in out/arch/arm64/boot/"
-        ls -la "$KERNEL_DIR/out/arch/arm64/boot/"
+        echo "ERROR: no kernel image found"
         exit 1
     fi
 
     echo "Using kernel image: $KIMG"
+
+    cd AnyKernel3/
     cp "$KERNEL_DIR/out/arch/arm64/boot/$KIMG" "$KIMG"
     cp "$KERNEL_DIR/out/dtbo.img" dtbo.img
     cp "$KERNEL_DIR/out/arch/arm64/boot/dts/qcom/$SOC.dtb" dtb
@@ -72,11 +70,8 @@ prepare_ak3() {
     sed -i "s/^device\.name1=.*/device.name1=${DEVICE}/" anykernel.sh
     sed -i "s/^device\.name2=.*/device.name2=${DEVICE2}/" anykernel.sh
 
-    # Package the flashable zip
     zip -r9 "$KERNEL_DIR/out/PrimeKernel-$DEVICE.zip" . -x ".git*" -x "README.md" -x "*.placeholder"
-
     cd "$KERNEL_DIR"
-}
 }
 
 build_kernel
