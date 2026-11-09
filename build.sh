@@ -45,7 +45,7 @@ build_dtbo() {
     DTBO_FILES=$(find $(pwd)/out/arch/arm64/boot/dts/samsung/ -name sm*150-sec-$DEVICE-eur-overlay-*.dtbo)
     $(pwd)/tools/mkdtimg create $(pwd)/out/dtbo.img --page_size=4096 ${DTBO_FILES}
 }
-
+ls -la out/arch/arm64/boot/
 prepare_ak3() {
     cd AnyKernel3/
 
