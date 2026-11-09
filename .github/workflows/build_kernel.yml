@@ -1,4 +1,126 @@
-      - name: Verify kernel outputs
+
+name: Build Prime Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Upload GitHub release'
+        type: boolean
+        required: true
+        default: false
+
+      changelog:
+        description: 'Release changelog'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+
+    outputs:
+      release_ts: ${{ steps.ts.outputs.release_ts }}
+
+    steps:
+      - name: Generate release timestamp
+        id: ts
+        run: |
+          RELEASE_TS=$(date -u +'%Y%m%d-%H%M%S')
+          echo "release_ts=$RELEASE_TS" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-22.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        device:
+          - name: a71
+            device2: a71xxx
+            soc: sdmagpie
+
+          - name: a70q
+            device2: a70
+            soc: sm6150
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            bc \
+            bison \
+            build-essential \
+            cpio \
+            curl \
+            flex \
+            g++ \
+            gcc \
+            gcc-aarch64-linux-gnu \
+            git \
+            libelf-dev \
+            libncurses-dev \
+            libssl-dev \
+            lz4 \
+            make \
+            python3 \
+            python-is-python3 \
+            rsync \
+            unzip \
+            wget \
+            zip \
+            zstd
+
+      - name: Download Android Clang
+        run: |
+          wget -O llvm.tar.gz \
+            https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/mirror-goog-main-llvm-toolchain-source/clang-r596125.tar.gz
+
+          mkdir -p llvm-22
+
+          tar -xf llvm.tar.gz -C llvm-22
+
+          rm llvm.tar.gz
+
+          chmod +x llvm-22/bin/*
+
+          echo "$GITHUB_WORKSPACE/llvm-22/bin" >> "$GITHUB_PATH"
+
+          clang --version
+
+      - name: Validate source files
+        run: |
+          test -f build.sh
+          test -f arch/arm64/configs/sdmmagpie_defconfig
+          test -f arch/arm64/configs/${{ matrix.device.name }}.config
+
+          test -f tools/mkdtimg
+          test -f AnyKernel3/anykernel.sh
+
+          echo "Source validation passed."
+
+      - name: Build kernel
+        run: |
+          chmod +x build.sh
+
+          ./build.sh \
+            "${{ matrix.device.name }}" \
+            "${{ matrix.device.device2 }}" \
+            "${{ matrix.device.soc }}"
+
+            - name: Verify kernel outputs
         run: |
           echo "Checking kernel Image..."
 
@@ -11,3 +133,117 @@
           test -s AnyKernel3/dtbo.img
 
           echo "All kernel outputs verified."
+
+      - name: Verify K9 module
+        if: matrix.device.name == 'a70q'
+        run: |
+          echo "Checking K9 configuration..."
+
+          grep -qx 'CONFIG_MODULES=y' out/.config
+          grep -qx 'CONFIG_K9=m' out/.config
+
+          K9_MODULE=$(find AnyKernel3/modules \
+            -type f -name 'k9.ko' -print -quit)
+
+          if [ -z "$K9_MODULE" ]; then
+            echo "ERROR: k9.ko was not generated."
+            exit 1
+          fi
+
+          echo "K9 module found: $K9_MODULE"
+
+      - name: Generate release notes
+        if: matrix.device.name == 'a71'
+        env:
+          CHANGELOG: ${{ inputs.changelog }}
+          RELEASE_ENABLED: ${{ inputs.release }}
+        run: |
+          : > version.txt
+
+          echo "**Kernel version:** $(cat out/include/config/kernel.release)  " >> version.txt
+          echo >> version.txt
+
+          KHASH=$(git rev-parse HEAD)
+
+          echo "**Kernel source:** [$KHASH](https://github.com/${{ github.repository }}/tree/$KHASH)" >> version.txt
+
+          if [ "$RELEASE_ENABLED" = "true" ] && [ -n "$CHANGELOG" ]; then
+            echo >> version.txt
+            echo "**Changelog:**" >> version.txt
+            echo >> version.txt
+            printf '%s\n' "$CHANGELOG" >> version.txt
+          fi
+
+      - name: Show AnyKernel3 contents
+        run: |
+          echo "Package contents:"
+          find AnyKernel3 -type f -print
+
+      - name: Upload kernel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PrimeKernel-${{ matrix.device.name }}-${{ needs.prepare.outputs.release_ts }}
+          path: AnyKernel3/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload release notes
+        if: matrix.device.name == 'a71'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: version.txt
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    needs:
+      - prepare
+      - build
+
+    if: ${{ inputs.release }}
+
+    runs-on: ubuntu-22.04
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: PrimeKernel-*
+          path: artifacts/
+          merge-multiple: false
+
+      - name: Create ZIP packages
+        run: |
+          cd artifacts
+
+          for dir in PrimeKernel-*; do
+            [ -d "$dir" ] || continue
+
+            (
+              cd "$dir"
+              zip -r "../${dir}.zip" .
+            )
+          done
+
+          ls -lh *.zip
+
+      - name: Download release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes/
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes/version.txt
+          tag_name: ${{ needs.prepare.outputs.release_ts }}
+          name: PrimeKernel-${{ needs.prepare.outputs.release_ts }}
+          files: artifacts/*.zip
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
