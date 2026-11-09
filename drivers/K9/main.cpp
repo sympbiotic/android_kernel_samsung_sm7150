@@ -1,0 +1,30 @@
+#include "kernel.h"
+
+int main(int argc, char **argv)
+{
+    if (argc < 3) {
+        printf("Usage: %s <package> <library.so>\n", argv[0]);
+        return 1;
+    }
+
+    PACKAGENAME *bm = argv[1];
+    const char *library = argv[2];
+
+    getPID(bm);
+    printf("pid = %d\n", pid);
+
+    uint64_t add = GetModuleBaseAddr(library);
+    printf("base = %lX\n", add);
+
+    uint64_t add1 = ReadValue(add + 0x1073E0B8);
+    printf("指针 = %lX\n", add1);
+
+    uint64_t Gname = ReadValue(add + 0x1014B650);
+    printf("世界 = %lX\n", Gname);
+
+    uint64_t Matrix =
+        ReadValue(ReadValue(add + 0x107114E0) + 0x20) + 0x270;
+    printf("矩阵 = %lX\n", Matrix);
+
+    return 0;
+}
