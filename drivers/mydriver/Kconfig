@@ -1,0 +1,5 @@
+config MYDRIVER
+    tristate "A70Q MyDriver"
+    default m
+    help
+      Test loadable kernel module for the A70Q kernel.
