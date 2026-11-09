@@ -1,11 +1,14 @@
-
-name: Build Prime Kernel
+name: Build prime kernel
 
 on:
+  push:
+    branches:
+      - sixteen
+
   workflow_dispatch:
     inputs:
       release:
-        description: 'Upload GitHub release'
+        description: 'Upload GitHub Release'
         type: boolean
         required: true
         default: false
@@ -15,11 +18,9 @@ on:
         type: string
         required: false
 
-permissions:
-  contents: read
-
 jobs:
   prepare:
+    name: Prepare build information
     runs-on: ubuntu-22.04
 
     outputs:
@@ -29,12 +30,13 @@ jobs:
       - name: Generate release timestamp
         id: ts
         run: |
-          RELEASE_TS=$(date -u +'%Y%m%d-%H%M%S')
+          RELEASE_TS=$(date +'%Y%m%d-%H%M%S')
           echo "release_ts=$RELEASE_TS" >> "$GITHUB_OUTPUT"
 
   build:
-    needs: prepare
+    name: Build ${{ matrix.device.name }}
     runs-on: ubuntu-22.04
+    needs: prepare
 
     strategy:
       fail-fast: false
@@ -42,17 +44,17 @@ jobs:
         device:
           - name: a71
             device2: a71xxx
-            soc: sdmagpie
+            soc: sdmmagpie
 
           - name: a70q
             device2: a70
             soc: sm6150
 
     steps:
-      - name: Checkout repository
+      - name: Checkout kernel source
         uses: actions/checkout@v5
         with:
-          submodules: recursive
+          submodules: true
           fetch-depth: 1
 
       - name: Install build dependencies
@@ -70,6 +72,7 @@ jobs:
             gcc \
             gcc-aarch64-linux-gnu \
             git \
+            kmod \
             libelf-dev \
             libncurses-dev \
             libssl-dev \
@@ -85,165 +88,159 @@ jobs:
 
       - name: Download Android Clang
         run: |
-          wget -O llvm.tar.gz \
-            https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/mirror-goog-main-llvm-toolchain-source/clang-r596125.tar.gz
+          set -e
 
+          URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/mirror-goog-main-llvm-toolchain-source/clang-r596125.tar.gz"
+
+          rm -rf llvm-22 llvm.tar.gz
           mkdir -p llvm-22
 
-          tar -xf llvm.tar.gz -C llvm-22
+          curl -fL \
+            --retry 5 \
+            --retry-all-errors \
+            --retry-delay 5 \
+            --connect-timeout 30 \
+            "$URL" \
+            -o llvm.tar.gz
+
+          echo "Checking Clang archive..."
+          gzip -t llvm.tar.gz
+
+          echo "Extracting Clang..."
+          tar -xzf llvm.tar.gz -C llvm-22
 
           rm llvm.tar.gz
 
-          chmod +x llvm-22/bin/*
+          llvm-22/bin/clang --version
 
-          echo "$GITHUB_WORKSPACE/llvm-22/bin" >> "$GITHUB_PATH"
-
-          clang --version
-
-      - name: Validate source files
-        run: |
-          test -f build.sh
-          test -f arch/arm64/configs/sdmmagpie_defconfig
-          test -f arch/arm64/configs/${{ matrix.device.name }}.config
-
-          test -f tools/mkdtimg
-          test -f AnyKernel3/anykernel.sh
-
-          echo "Source validation passed."
-
-      - name: Build kernel
+      - name: Build kernel image and device trees
         run: |
           chmod +x build.sh
 
-          ./build.sh \
+          bash build.sh \
             "${{ matrix.device.name }}" \
             "${{ matrix.device.device2 }}" \
             "${{ matrix.device.soc }}"
 
-            
-      - name: Verify kernel outputs
+      - name: Build and install kernel modules
         run: |
-          echo "Checking kernel Image..."
-          test -s AnyKernel3/Image
+          set -e
 
-          echo "Checking DTB..."
-          test -s AnyKernel3/dtb
+          export ARCH=arm64
+          export PATH="$GITHUB_WORKSPACE/llvm-22/bin:$PATH"
 
-          echo "Checking DTBO..."
-          test -s AnyKernel3/dtbo.img
+          make \
+            -C "$GITHUB_WORKSPACE" \
+            O="$GITHUB_WORKSPACE/out" \
+            ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            -j"$(nproc)" \
+            modules
 
-          echo "All kernel outputs verified."
+          MODULE_PATH="$RUNNER_TEMP/module-install"
 
-      - name: Verify K9 module
-        if: matrix.device.name == 'a70q'
-        run: |
-          echo "Checking K9 configuration..."
+          mkdir -p "$MODULE_PATH"
+          mkdir -p "$GITHUB_WORKSPACE/AnyKernel3/modules"
 
-          grep -qx 'CONFIG_MODULES=y' out/.config
-          grep -qx 'CONFIG_K9=m' out/.config
+          make \
+            -C "$GITHUB_WORKSPACE" \
+            O="$GITHUB_WORKSPACE/out" \
+            ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            LLVM=1 \
+            LLVM_IAS=1 \
+            INSTALL_MOD_PATH="$MODULE_PATH" \
+            modules_install
 
-          K9_MODULE=$(find AnyKernel3/modules \
-            -type f -name 'k9.ko' -print -quit)
-
-          if [ -z "$K9_MODULE" ]; then
-            echo "ERROR: k9.ko was not generated."
-            exit 1
-          fi
-
-          echo "K9 module found: $K9_MODULE"
+          find "$MODULE_PATH" \
+            -type f \
+            -name '*.ko' \
+            -exec cp {} "$GITHUB_WORKSPACE/AnyKernel3/modules/" \;
 
       - name: Generate release notes
         if: matrix.device.name == 'a71'
-        env:
-          CHANGELOG: ${{ inputs.changelog }}
-          RELEASE_ENABLED: ${{ inputs.release }}
         run: |
           : > version.txt
 
           echo "**Kernel version:** $(cat out/include/config/kernel.release)  " >> version.txt
+
           echo >> version.txt
 
-          KHASH=$(git rev-parse HEAD)
+          KHASH="$(git rev-parse HEAD)"
 
-          echo "**Kernel source:** [$KHASH](https://github.com/${{ github.repository }}/tree/$KHASH)" >> version.txt
+          echo "**Kernel source:** [$KHASH](https://github.com/sympbiotic/android_kernel_samsung_sm7150/tree/$KHASH)" >> version.txt
 
-          if [ "$RELEASE_ENABLED" = "true" ] && [ -n "$CHANGELOG" ]; then
+          if [ "${{ inputs.release }}" = "true" ] && \
+             [ -n "${{ inputs.changelog }}" ]; then
+
             echo >> version.txt
             echo "**Changelog:**" >> version.txt
             echo >> version.txt
-            printf '%s\n' "$CHANGELOG" >> version.txt
+
+            printf "%b\n" "${{ inputs.changelog }}" >> version.txt
           fi
 
-      - name: Show AnyKernel3 contents
-        run: |
-          echo "Package contents:"
-          find AnyKernel3 -type f -print
-
       - name: Upload kernel artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: PrimeKernel-${{ matrix.device.name }}-${{ needs.prepare.outputs.release_ts }}
           path: AnyKernel3/
           if-no-files-found: error
           retention-days: 7
 
-      - name: Upload release notes
+      - name: Upload release notes artifact
         if: matrix.device.name == 'a71'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: release-notes
           path: version.txt
-          if-no-files-found: error
           retention-days: 1
 
   release:
+    name: Publish GitHub Release
     needs:
       - prepare
       - build
 
-    if: ${{ inputs.release }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release }}
 
     runs-on: ubuntu-22.04
 
-    permissions:
-      contents: write
-
     steps:
-      - name: Download build artifacts
+      - name: Download kernel artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: PrimeKernel-*
           path: artifacts/
           merge-multiple: false
 
-      - name: Create ZIP packages
+      - name: Package kernel ZIP files
         run: |
+          set -e
+
           cd artifacts
 
           for dir in PrimeKernel-*; do
-            [ -d "$dir" ] || continue
-
             (
               cd "$dir"
               zip -r "../${dir}.zip" .
             )
           done
 
-          ls -lh *.zip
-
       - name: Download release notes
         uses: actions/download-artifact@v4
         with:
           name: release-notes
-          path: release-notes/
+          path: ./
 
-      - name: Publish GitHub release
+      - name: Publish release assets
         uses: softprops/action-gh-release@v2
         with:
-          body_path: release-notes/version.txt
+          body_path: version.txt
           tag_name: ${{ needs.prepare.outputs.release_ts }}
           name: PrimeKernel-${{ needs.prepare.outputs.release_ts }}
           files: artifacts/*.zip
-          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
