@@ -63,5 +63,4 @@ prepare_ak3() {
 build_kernel
 build_dtb
 build_dtbo
-build_modules
 prepare_ak3
