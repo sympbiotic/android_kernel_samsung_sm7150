@@ -49,15 +49,34 @@ ls -la out/arch/arm64/boot/
 prepare_ak3() {
     cd AnyKernel3/
 
-    mv "$KERNEL_DIR/out/dtbo.img" dtbo.img
-    mv "$KERNEL_DIR/out/arch/arm64/boot/Image" Image
+    # Find whichever kernel image the build produced
+    KIMG=""
+    for f in Image.gz-dtb Image.gz Image; do
+        if [ -f "$KERNEL_DIR/out/arch/arm64/boot/$f" ]; then
+            KIMG="$f"
+            break
+        fi
+    done
 
-    mv "$KERNEL_DIR/out/arch/arm64/boot/dts/qcom/$SOC.dtb" dtb
+    if [ -z "$KIMG" ]; then
+        echo "ERROR: no kernel image found in out/arch/arm64/boot/"
+        ls -la "$KERNEL_DIR/out/arch/arm64/boot/"
+        exit 1
+    fi
+
+    echo "Using kernel image: $KIMG"
+    cp "$KERNEL_DIR/out/arch/arm64/boot/$KIMG" "$KIMG"
+    cp "$KERNEL_DIR/out/dtbo.img" dtbo.img
+    cp "$KERNEL_DIR/out/arch/arm64/boot/dts/qcom/$SOC.dtb" dtb
 
     sed -i "s/^device\.name1=.*/device.name1=${DEVICE}/" anykernel.sh
     sed -i "s/^device\.name2=.*/device.name2=${DEVICE2}/" anykernel.sh
 
+    # Package the flashable zip
+    zip -r9 "$KERNEL_DIR/out/PrimeKernel-$DEVICE.zip" . -x ".git*" -x "README.md" -x "*.placeholder"
+
     cd "$KERNEL_DIR"
+}
 }
 
 build_kernel
