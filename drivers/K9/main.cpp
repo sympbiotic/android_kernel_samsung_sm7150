@@ -1,18 +1,12 @@
 #include "kernel.h"
 
-int main(int argc, char **argv)
+int main(int argc,char **argv)
 {
-    if (argc < 3) {
-        printf("Usage: %s <package> <library.so>\n", argv[0]);
-        return 1;
-    }
-
-    PACKAGENAME *bm = argv[1];
-    const char *library = argv[2];
-
-    getPID(bm);
-    printf("pid = %d\n", pid);
-
+	PACKAGENAME* bm="com.tencent.tmgp.pubgmhd";
+	getPID(bm);
+	printf("pid = %d\n", pid);
+	uint64_t add=GetModuleBaseAddr("libUE4.so");
+	printf("base = %lX\n", add);
 
 	uint64_t add1=ReadValue(add+0x1073E0B8);
 	printf("指针 = %lX\n",add1);
