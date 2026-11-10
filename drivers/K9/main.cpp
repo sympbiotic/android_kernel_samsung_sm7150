@@ -2,10 +2,10 @@
 
 int main(int argc,char **argv)
 {
-	PACKAGENAME* bm="com.tencent.tmgp.pubgmhd";
+	PACKAGENAME* bm="com dts.freefireth";
 	getPID(bm);
 	printf("pid = %d\n", pid);
-	uint64_t add=GetModuleBaseAddr("libUE4.so");
+	uint64_t add=GetModuleBaseAddr("libuntity.so");
 	printf("base = %lX\n", add);
 
 	uint64_t add1=ReadValue(add+0x1073E0B8);
