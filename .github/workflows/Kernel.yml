@@ -1,0 +1,49 @@
+name: Prepare 4.19 Port
+
+on:
+  workflow_dispatch:
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout SM7150 kernel
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Show current kernel
+        run: |
+          make kernelversion
+
+      - name: Fetch Linux 4.19 history
+        run: |
+          git remote add upstream https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git
+          git fetch upstream linux-4.19.y --no-tags
+
+      - name: Create 4.19 port branch
+        run: |
+          git switch -c port-4.19
+
+      - name: Show upstream 4.19
+        run: |
+          git describe --tags upstream/linux-4.19.y
+          git rev-parse upstream/linux-4.19.y
+
+      - name: Upload migration information
+        run: |
+          mkdir -p port-info
+          git log --oneline -20 > port-info/current-history.txt
+          git diff --stat upstream/linux-4.19.y > port-info/diff-stat.txt
+
+      - name: Upload port information
+        uses: actions/upload-artifact@v4
+        with:
+          name: 4.19-port-info
+          path: port-info/
