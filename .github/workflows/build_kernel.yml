@@ -1,7 +1,7 @@
 name: Build prime kernel
 
 on:
-  push:
+  workflow_dispatch:
     branches:
       - sixteen
 
