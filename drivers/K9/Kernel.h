@@ -1,83 +1,38 @@
 #ifndef KERNEL_H
 #define KERNEL_H
 
-#include <stdio.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <dirent.h>
-#include <string.h>
 #include <unistd.h>
 #include <ctype.h>
 #include <time.h>
 #include <sys/stat.h>
-#include <sys/fcntl.h>
+#include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <string.h>
+#include <linux/types.h>
+#include <asm/ptrace.h>
+#include <errno.h>
 
-#include <vector>
-#include <string>
 
-
-#define OP_CMD_HWBP_ADD      0x804
-#define OP_CMD_HWBP_GET_HITS 0x805
-#define OP_CMD_HWBP_ENABLE   0x806
-#define OP_CMD_HWBP_CLEAR    0x807
-#define OP_CMD_HWBP_DISABLE  0x809
-#define OP_CMD_HIDE_PROCESS 0x810
-#define OP_CMD_RECOVER_PROCESS 0x811
-
-#define HW_BP_TYPE_R    1
-#define HW_BP_TYPE_W    2
-#define HW_BP_TYPE_RW   3
-#define HW_BP_TYPE_X    4
-#define MAX_MODIFY_REGS 10
+#define OP_CMD_READ 601
+#define OP_CMD_WRITE 602
+#define OP_CMD_BASE 603
+#define OP_CMD_GETPID 604
+#define OP_CMD_HIDE_PROCESS 605
+#define OP_CMD_UN_HOOK 606
+#define OP_CMD_RECOVER_PROCESS 607
+#define OP_HW_BREAKPOINT_CTL 608
+#define OP_HW_BREAKPOINT_GET_HITS 609
 
 
 
 
-
-class c_driver
-{
-private:
-	int fd;
-	pid_t pid;
-
-	typedef struct _HW_BP_INFO {
-    pid_t pid;
-    uintptr_t addr;
-    int type;      
-    int len;
-
-    bool is_write_gp_regs;                   
-    int gp_reg_count;                        
-    int gp_reg_indices[MAX_MODIFY_REGS];     
-    uint64_t gp_reg_values[MAX_MODIFY_REGS]; 
-    bool is_write_fp_regs;
-    int fp_reg_count;                        
-    int fp_reg_indices[MAX_MODIFY_REGS];     
-    uint64_t fp_reg_values[MAX_MODIFY_REGS][2]; 
-} HW_BP_INFO;
-
-struct REGS_INFO {
-    uint64_t regs[31];
-    uint64_t sp;
-    uint64_t pc;
-    uint64_t pstate;
-};
-
-struct HWBP_HIT_ITEM {
-    pid_t task_id;
-    uintptr_t hit_addr;
-    uint64_t hit_time;
-    struct REGS_INFO regs_info;
-};
-
-typedef struct _HWBP_HIT_ARGS {
-    pid_t pid;
-    uintptr_t addr;
-    void *out_buf;      
-    int out_len;        
-    int real_count;     
-} HWBP_HIT_ARGS;
 
 
 typedef struct _COPY_MEMORY {
@@ -87,13 +42,6 @@ typedef struct _COPY_MEMORY {
     size_t size;
 } COPY_MEMORY, *PCOPY_MEMORY;
 
-typedef struct _proinf{
-    uintptr_t cmaddr;
-    uintptr_t mbaddr;
-    uintptr_t isreadaddr;
-    int isread;
-} proinf, *PCOPY_proinf;
-
 typedef struct _MODULE_BASE {
     pid_t pid;
     char* name;
@@ -101,203 +49,107 @@ typedef struct _MODULE_BASE {
     short index;
 } MODULE_BASE, *PMODULE_BASE;
 
-typedef struct _PROGRAM_PROCESS {
-    char *package_name;
-    int pid;
-} PROGRAM_PROCESSS;
 
-enum OPERATIONS {
-    OP_INIT_KEY = 0x800,
-    OP_READ_MEM = 0x801,
-    OP_WRITE_MEM = 0x802,
-    OP_MODULE_BASE = 0x803,
+
+enum HW_BREAKPOINT_ACTION {
+    HW_BP_ADD = 1,
+    HW_BP_REMOVE = 2,
 };
 
-	char *driver_path()
-	{
-		printf("\033[32m;1m welcome to kernel.h by Cycle1337 \033[0m\n");
+enum HW_BREAKPOINT_TYPE {
+    HW_BP_TYPE_EXECUTE = 0,
+    HW_BP_TYPE_WRITE   = 1,
+    HW_BP_TYPE_RW      = 2,
+};
 
-		const char *dev_path = "/dev";
-		DIR *dir = opendir(dev_path);
-		if (dir == NULL)
-		{
-			printf("\033[31m;1m [!] failed to open /dev \033[0m\n");
-			return NULL;
-		}
 
-		const std::vector<std::string> excluded_names = {
-			"binder", "common", "ashmem", "stdin", "stdout", "stderr"};
+typedef struct _HW_BREAKPOINT_CTL {
+    pid_t           pid;
+    uintptr_t       addr;
+    int             action;
+    int             type;
+    int             len;
+} HW_BREAKPOINT_CTL, *PHW_BREAKPOINT_CTL;
 
-		struct dirent *entry;
-		char *file_path = NULL;
-		while ((entry = readdir(dir)) != NULL)
-		{
-			const char *current_name = entry->d_name;
+typedef struct _HW_BREAKPOINT_HIT_INFO {
+    pid_t           pid;
+    uint64_t        timestamp;
+    uintptr_t       addr;
+    struct user_pt_regs regs;
+} HW_BREAKPOINT_HIT_INFO, *PHW_BREAKPOINT_HIT_INFO;
 
-			if (strcmp(current_name, ".") == 0 || strcmp(current_name, "..") == 0)
-			{
-				continue;
-			}
+typedef struct _HW_BREAKPOINT_GET_HITS_CTL {
+    uintptr_t       buffer;
+    size_t          count;
+} HW_BREAKPOINT_GET_HITS_CTL, *PHW_BREAKPOINT_GET_HITS_CTL;
 
-			if (strstr(current_name, "gpiochip") != NULL ||
-				strchr(current_name, '_') != NULL ||
-				strchr(current_name, '-') != NULL ||
-				strchr(current_name, ':') != NULL)
-			{
-				continue;
-			}
 
-			bool is_excluded = false;
-			for (const auto &name : excluded_names)
-			{
-				if (strcmp(current_name, name.c_str()) == 0)
-				{
-					is_excluded = true;
-					break;
-				}
-			}
-			if (is_excluded)
-			{
-				continue;
-			}
 
-			size_t path_length = strlen(dev_path) + strlen(current_name) + 2;
-			file_path = (char *)malloc(path_length);
-			if (!file_path)
-				continue;
-
-			snprintf(file_path, path_length, "%s/%s", dev_path, current_name);
-
-			struct stat file_info;
-			if (stat(file_path, &file_info) < 0)
-			{
-				free(file_path);
-				file_path = NULL;
-				continue;
-			}
-
-			if (S_ISCHR(file_info.st_mode) || S_ISBLK(file_info.st_mode))
-			{
-				if (localtime(&file_info.st_ctime)->tm_year + 1900 <= 1980)
-				{
-					free(file_path);
-					file_path = NULL;
-					continue;
-				}
-
-				if (file_info.st_atime == file_info.st_ctime &&
-					file_info.st_size == 0 &&
-					file_info.st_gid == 0 &&
-					file_info.st_uid == 0 &&
-					strlen(current_name) == 6)
-				{
-					closedir(dir);
-					return file_path;
-				}
-			}
-
-			free(file_path);
-			file_path = NULL;
-		}
-
-		closedir(dir);
-		return NULL;
-	}
+class c_driver {
+private:
+    int fd;
+    pid_t pid;
 
 public:
-	c_driver()
-	{
-		char *device_name = driver_path();
-		fd = open(device_name, O_RDWR);
+    c_driver() {
 
-		if (fd == -1)
-		{
-			printf("\033[31m;1m [!] failed to open %s | fd: -1 \033[0m\n", device_name);
-			free(device_name);
-			exit(0);
-		}
+    }
 
-		printf("\033[33m;1m [-] driver path: %s | fd: %d \033[0m\n", device_name, fd);
-		free(device_name);
-	}
+    ~c_driver() {
+        if (fd > 0)
+            close(fd);
+    }
 
-	void initialize(pid_t pid)
-	{
-		this->pid = pid;
-	}
+    void initialize(pid_t pid) {
+        this->pid = pid;
+    }
 
-	bool init_key(char *key)
-	{
-		char buf[0x100];
-		strcpy(buf, key);
-		if (ioctl(fd, OP_INIT_KEY, buf) != 0)
-		{
-			return false;
-		}
-		return true;
-	}
+   
+    bool read(uintptr_t addr, void *buffer, size_t size) {
+        COPY_MEMORY cm;
+        cm.pid = this->pid;
+        cm.addr = addr;
+        cm.buffer = buffer;
+        cm.size = size;
+        return ioctl(fd, OP_CMD_READ, &cm) == 0;
+    }
 
-	bool read(uintptr_t addr, void *buffer, size_t size)
-	{
-		COPY_MEMORY cm;
+   
+    bool write(uintptr_t addr, void *buffer, size_t size) {
+        COPY_MEMORY cm;
+        cm.pid = this->pid;
+        cm.addr = addr;
+        cm.buffer = buffer;
+        cm.size = size;
+        return ioctl(fd, OP_CMD_WRITE, &cm) == 0;
+    }
+    
+    template <typename T>
+    T read(uintptr_t addr) {
+        T res;
+        if (this->read(addr, &res, sizeof(T)))
+            return res;
+        return {};
+    }
 
-		cm.pid = this->pid;
-		cm.addr = addr;
-		cm.buffer = buffer;
-		cm.size = size;
+    template <typename T>
+    bool write(uintptr_t addr, T value) {
+        return this->write(addr, &value, sizeof(T));
+    }
 
-		if (ioctl(fd, OP_READ_MEM, &cm) != 0)
-		{
-			return false;
-		}
-		return true;
-	}
-
-	bool write(uintptr_t addr, void *buffer, size_t size)
-	{
-		COPY_MEMORY cm;
-
-		cm.pid = this->pid;
-		cm.addr = addr;
-		cm.buffer = buffer;
-		cm.size = size;
-
-		if (ioctl(fd, OP_WRITE_MEM, &cm) != 0)
-		{
-			return false;
-		}
-		return true;
-	}
-
-	template <typename T>
-	T read(uintptr_t addr)
-	{
-		T res;
-		if (this->read(addr, &res, sizeof(T)))
-			return res;
-		return {};
-	}
-
-	template <typename T>
-	bool write(uintptr_t addr, T value)
-	{
-		return this->write(addr, &value, sizeof(T));
-	}
-
-	uintptr_t get_module_base(char *name)
-	{
-		MODULE_BASE mb;
-		char buf[0x100];
-		strcpy(buf, name);
-		mb.pid = this->pid;
-		mb.name = buf;
-
-		if (ioctl(fd, OP_MODULE_BASE, &mb) != 0)
-		{
-			return 0;
-		}
-		return mb.base;
-	}
+  
+    uintptr_t get_module_base(char* module_name, short index = 0) {
+        MODULE_BASE mb;
+        mb.pid = this->pid;
+        mb.name = module_name;
+        mb.index = index;
+        mb.base = 0;
+        
+        if (ioctl(fd, OP_CMD_BASE, &mb) == 0) {
+            return mb.base;
+        }
+        return 0;
+    }
 
     void hide_process() { 
         ioctl(fd, OP_CMD_HIDE_PROCESS); 
@@ -307,49 +159,57 @@ public:
         ioctl(fd, OP_CMD_RECOVER_PROCESS);
     }
 
-    bool AddHwBp(HW_BP_INFO* info) {
-        if (ioctl(fd, OP_CMD_HWBP_ADD, info) != 0) {
-            return false;
-        }
-        return true;
+
+    
+
+int add_breakpoint(uintptr_t addr, int type, int len) {
+    HW_BREAKPOINT_CTL req;
+    req.action = HW_BP_ADD;
+    req.pid = this->pid;
+    req.addr = addr;
+    req.len = len;
+    req.type = type;
+
+    if (ioctl(fd, OP_HW_BREAKPOINT_CTL, &req) == 0) {
+        return 0;
+    }
+    return errno;
+}
+
+
+    
+    bool remove_breakpoint(uintptr_t addr) {
+        HW_BREAKPOINT_CTL req;
+        req.action = HW_BP_REMOVE;
+        req.pid = this->pid;
+        req.addr = addr;
+        req.len = 0;
+        req.type = 0;
+
+        return ioctl(fd, OP_HW_BREAKPOINT_CTL, &req) == 0;
     }
 
-    bool UpdateAndEnableHwBp(HW_BP_INFO* info) {
-        if (ioctl(fd, OP_CMD_HWBP_ENABLE, info) != 0) {
-            return false;
-        }
-        return true;
-    }
+  
+    // buffer: 用户态分配的 HW_BREAKPOINT_HIT_INFO 数组
+    // max_count: 数组大小
+    // 返回值: 实际获取到的数量，-1 表示失败
+        int get_breakpoint_hits(HW_BREAKPOINT_HIT_INFO *buffer, size_t max_count) {
+        if (!buffer || max_count == 0) return 0;
+        
+        HW_BREAKPOINT_GET_HITS_CTL ctl;
+        ctl.count = max_count;
+        
+        ctl.buffer = (uintptr_t)buffer; 
 
-    bool DisableHwBp(int target_pid, uintptr_t addr) {
-        HW_BP_INFO info;
-        memset(&info, 0, sizeof(info));
-        info.pid = target_pid;
-        info.addr = addr;
-        if (ioctl(fd, OP_CMD_HWBP_DISABLE, &info) != 0) {
-            return false;
-        }
-        return true;
-    }
-
-
-    bool ClearHwBp() {
-        if (ioctl(fd, OP_CMD_HWBP_CLEAR, NULL) != 0) {
-            return false;
-        }
-        return true;
-    }
-
-
-    int GetHwBpHits(HWBP_HIT_ARGS* args) {
-        if (!args || !args->out_buf || args->out_len <= 0) return 0;
-        int ret = ioctl(fd, OP_CMD_HWBP_GET_HITS, args);
-        if (ret == 0) {
-            return args->real_count; 
+        // 注意：ioctl 成功返回 0，但我们需要返回 count
+        // 这里假设驱动在成功时会把实际数量写回 ctl.count
+        int ret = ioctl(fd, OP_HW_BREAKPOINT_GET_HITS, &ctl);
+        if (ret >= 0) {
+             // 如果内核返回的是处理的条数，直接返回 ret
+             return ret; 
         }
         return -1;
     }
-    
     
 };
 
@@ -446,7 +306,13 @@ long GetModuleBaseAddr_Maps(char* module_name)
 }
 
 
-
+long GetModuleBaseAddr(char* module_name, int index = 0) {
+    long base = driver->get_module_base(module_name, index);
+    if (base == 0 && index == 0) {
+        return GetModuleBaseAddr_Maps(module_name);
+    }
+    return base;
+}
 
 long ReadValue(long addr)
 {
@@ -458,7 +324,6 @@ long ReadValue(long addr)
     }
     return he;
 }
-
 
 long ReadDword(long addr)
 {
