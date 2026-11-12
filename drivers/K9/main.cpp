@@ -2,7 +2,7 @@
 
 int main(int argc,char **argv)
 {
-	PACKAGENAME* bm="com dts.freefireth";
+	PACKAGENAME* bm="com dts.freefiremax";
 	getPID(bm);
 	printf("pid = %d\n", pid);
 	uint64_t add=GetModuleBaseAddr("libuntity.so");
