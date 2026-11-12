@@ -225,10 +225,7 @@ obj-$(CONFIG_TZIC)  += security/samsung/tzic/
 # SPU signature verify
 obj-$(CONFIG_SPU_VERIFY) += spu_verify/
 
-#My drivers testing
-obj-$(CONFIG_MYDRIVER) += mydriver/
-
 #K9 
-obj-$(K9_MYDRIVER) += K9/
+obj-$(CONFIG_K9) += K9/
 
 obj-y				+= kernelsu/
